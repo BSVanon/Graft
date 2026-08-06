@@ -10,12 +10,13 @@ import Parser from "tree-sitter";
 import TypeScript from "tree-sitter-typescript";
 import Python from "tree-sitter-python";
 import Go from "tree-sitter-go";
+import Rust from "tree-sitter-rust";
 import { basename } from "node:path";
 import { contentHash } from "../util/id.js";
 import { collectBindings, goReceiverVarOf, resolveRecvType, type FileBindings } from "./bindings.js";
 import type { Kind, NodeV1, Relation } from "./types.js";
 
-export type Language = "typescript" | "tsx" | "python" | "go";
+export type Language = "typescript" | "tsx" | "python" | "go" | "rust";
 
 /**
  * Extension → the tree-sitter grammar that parses it, and the label a human expects
@@ -44,6 +45,7 @@ const EXTENSIONS: ReadonlyArray<{ ext: string; grammar: Language; label: string 
   { ext: ".pyi", grammar: "python", label: "python" },
   { ext: ".py", grammar: "python", label: "python" },
   { ext: ".go", grammar: "go", label: "go" },
+  { ext: ".rs", grammar: "rust", label: "rust" },
 ];
 
 function entryFor(path: string): (typeof EXTENSIONS)[number] | undefined {
@@ -149,11 +151,23 @@ const GO_KINDS: Record<string, Kind> = {
   method_declaration: "method",
 };
 
+// Rust: `function_item` inside an `impl` is resolved to "method" in describeRust();
+// `impl_item` itself is not a symbol, so the walk descends into its methods with context.
+const RUST_KINDS: Record<string, Kind> = {
+  function_item: "function",
+  struct_item: "struct",
+  union_item: "struct",
+  enum_item: "enum",
+  trait_item: "interface",
+  type_item: "type",
+};
+
 const KINDS_BY_LANG: Record<Language, Record<string, Kind>> = {
   typescript: TS_KINDS,
   tsx: TS_KINDS,
   python: PY_KINDS,
   go: GO_KINDS,
+  rust: RUST_KINDS,
 };
 
 const FUNCTION_VALUE_TYPES = new Set([
@@ -169,6 +183,7 @@ const GRAMMARS: Record<Language, unknown> = {
   tsx: TypeScript.tsx,
   python: Python,
   go: Go,
+  rust: Rust,
 };
 
 export interface WalkCtx {
@@ -268,7 +283,9 @@ function walk(node: Parser.SyntaxNode, ctx: WalkCtx, out: NodeV1[], edges: RawEd
           ? !desc.name.startsWith("_")
           : ctx.lang === "go"
             ? goExported(desc.name)
-            : tsExported(node),
+            : ctx.lang === "rust"
+              ? rustExported(node)
+              : tsExported(node),
       origin: "ast",
       body_hash: contentHash(desc.hashNode.text),
       body_text: searchBody(desc.hashNode.text),
@@ -440,6 +457,7 @@ function isDeclarationName(node: Parser.SyntaxNode): boolean {
  * TS arrow-consts. */
 function describe(node: Parser.SyntaxNode, ctx: WalkCtx): DefDescriptor | null {
   if (ctx.lang === "go") return describeGo(node, ctx);
+  if (ctx.lang === "rust") return describeRust(node, ctx);
 
   const mapped = ctx.kinds[node.type];
   if (mapped) {
@@ -514,6 +532,39 @@ function describeGo(node: Parser.SyntaxNode, _ctx: WalkCtx): DefDescriptor | nul
   return null;
 }
 
+/** Rust definition shapes: free functions, impl methods (qualified by their impl
+ * type like Go receivers), and named types (struct / union / enum / trait / type alias). */
+function describeRust(node: Parser.SyntaxNode, _ctx: WalkCtx): DefDescriptor | null {
+  if (node.type === "function_item") {
+    const name = node.childForFieldName("name")?.text;
+    if (!name) return null;
+    const body = node.childForFieldName("body");
+    const headerEnd = body ? body.startIndex : node.endIndex;
+    // A function_item whose grandparent is an `impl` block is a method; qualify its id
+    // by the impl's type (`Foo.bar`) so it stays unique and `recv.bar()` resolves.
+    const implType = rustImplType(node);
+    return implType
+      ? { name, idName: `${implType}.${name}`, kind: "method", headerEnd, hashNode: node }
+      : { name, kind: "function", headerEnd, hashNode: node };
+  }
+  const kind = RUST_KINDS[node.type];
+  if (kind) {
+    const name = node.childForFieldName("name")?.text;
+    if (!name) return null;
+    const body = node.childForFieldName("body");
+    return { name, kind, headerEnd: body ? body.startIndex : node.endIndex, hashNode: node };
+  }
+  return null;
+}
+
+/** The type a `function_item` is implemented on, when it sits in an `impl` block
+ * (`impl Foo { fn bar() }` / `impl Trait for Foo { … }` → `Foo`). Null for free fns. */
+function rustImplType(node: Parser.SyntaxNode): string | null {
+  const impl = node.parent?.parent; // function_item → declaration_list → impl_item
+  if (impl?.type !== "impl_item") return null;
+  return impl.childForFieldName("type")?.text ?? null;
+}
+
 /** The receiver's base type name for a Go method, unwrapping a pointer receiver
  * (`func (u *User) …` → `User`). Null if it can't be read. */
 function goReceiverType(node: Parser.SyntaxNode): string | null {
@@ -530,6 +581,11 @@ function goExported(name: string): boolean {
   const own = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name;
   const first = own[0] ?? "";
   return first !== first.toLowerCase() && first === first.toUpperCase();
+}
+
+/** Rust visibility: a symbol is exported iff it carries a `pub` visibility modifier. */
+function rustExported(node: Parser.SyntaxNode): boolean {
+  return node.namedChildren.some((c) => c.type === "visibility_modifier");
 }
 
 function heritageEdges(node: Parser.SyntaxNode, classId: string, ctx: WalkCtx): RawEdge[] {
@@ -583,6 +639,22 @@ function calleeName(
     const p = fn.childForFieldName("property") ?? fn.namedChildren.at(-1);
     return p ? { name: p.text, viaMember: true, receiver: tsReceiver(fn) } : null;
   }
+  if (lang === "rust") {
+    if (fn.type === "field_expression") {
+      // `recv.method(args)` — the called name is the trailing field.
+      const field = fn.childForFieldName("field") ?? fn.namedChildren.at(-1);
+      const value = fn.childForFieldName("value");
+      const receiver = value?.type === "identifier" ? value.text : undefined;
+      return field ? { name: field.text, viaMember: true, receiver } : null;
+    }
+    if (fn.type === "scoped_identifier") {
+      // `Foo::bar(args)` / `mod::func()` — the called name is the trailing segment.
+      const nm = fn.childForFieldName("name") ?? fn.namedChildren.at(-1);
+      const path = fn.childForFieldName("path");
+      const receiver = path?.type === "identifier" ? path.text : undefined;
+      return nm ? { name: nm.text, viaMember: true, receiver } : null;
+    }
+  }
   return null;
 }
 
@@ -616,6 +688,7 @@ function isImport(node: Parser.SyntaxNode, lang: Language): boolean {
   // Go: match the per-import leaf, so single (`import "fmt"`) and grouped
   // (`import ( … )`) forms each yield one edge as the walk recurses into the list.
   if (lang === "go") return node.type === "import_spec";
+  if (lang === "rust") return node.type === "use_declaration";
   return node.type === "import_statement" || node.type === "import_from_statement";
 }
 
@@ -630,6 +703,10 @@ function importSpecifier(node: Parser.SyntaxNode, lang: Language): string | null
     // import_spec's `path` is an interpreted_string_literal, e.g. `"mymod/pkg/util"`.
     const path = node.childForFieldName("path") ?? node.namedChildren.at(-1);
     return path ? path.text.replace(/^["`]|["`]$/g, "") : null;
+  }
+  if (lang === "rust") {
+    // `use a::b::c;` — the whole use path as a coarse specifier.
+    return node.childForFieldName("argument")?.text ?? null;
   }
   const str = node.namedChildren.find((c) => c.type === "string");
   if (!str) return null;
