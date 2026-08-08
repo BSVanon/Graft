@@ -106,10 +106,12 @@ test("Rust extraction: free fns, impl methods, structs, unions, enums, traits, t
     assert.equal(foo?.exported, true);
     assert.equal(nodeById(graph!, "src/lib.rs#bar")?.exported, false);
 
-    // impl methods — id qualified by the impl type (`User.save`), pub drives exported
+    // impl methods — id qualified by the impl type (`User.save`), pub drives exported,
+    // and the impl type is stamped as `owner` (feeds resolve.ts's ownerMethod index)
     const save = nodeById(graph!, "src/lib.rs#User.save");
     assert.equal(save?.kind, "method");
     assert.equal(save?.exported, true);
+    assert.equal(save?.owner, "User");
     const nameLen = nodeById(graph!, "src/lib.rs#User.name_len");
     assert.equal(nameLen?.kind, "method");
     assert.equal(nameLen?.exported, false);
