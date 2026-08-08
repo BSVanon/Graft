@@ -167,6 +167,84 @@ test("Go extraction: go.mod in a subdirectory resolves intra-module imports", as
   }
 });
 
+// A cross-package callee `pkg.Func()` is a package-qualified free-function call, not a
+// member call — the resolver must link it to the exported function's definition. These
+// guard two blast-radius under-reports found on a real Go repo (graft v0.9.0): qualified
+// calls produced no incoming edge, and the same call nested in a composite/map literal
+// was missed too (a symptom of the same selector-resolution gap, not a walk-descent bug).
+function makeCrossPkgFixture(): string {
+  const dir = mkdtempSync(join(tmpdir(), "graft-go-xpkg-"));
+  writeFileSync(join(dir, "go.mod"), "module demo\n\ngo 1.21\n");
+  mkdirSync(join(dir, "topics"), { recursive: true });
+  writeFileSync(
+    join(dir, "topics", "topics.go"),
+    "package topics\n\nfunc ParseUHRPOutput() int { return 1 }\n\nfunc KVStoreCanonical(x int) int { return x }\n",
+  );
+  mkdirSync(join(dir, "alias"), { recursive: true });
+  writeFileSync(join(dir, "alias", "alias.go"), "package alias\n\nfunc Helper() int { return 0 }\n");
+  writeFileSync(
+    join(dir, "main.go"),
+    `package main\n\nimport (\n\t"fmt"\n\t"demo/topics"\n\ta "demo/alias"\n)\n\n` +
+      `type Engine struct{ n int }\n\n` +
+      `func (e *Engine) run() int { return e.n }\n\n` +
+      `func LookupCaller() int {\n\treturn topics.ParseUHRPOutput()\n}\n\n` +
+      `func BuildManagers() map[string]int {\n\treturn map[string]int{\n\t\t"kv": topics.KVStoreCanonical(1),\n\t}\n}\n\n` +
+      `func AliasCaller() int {\n\treturn a.Helper()\n}\n\n` +
+      `func MemberCaller() int {\n\te := &Engine{n: 2}\n\treturn e.run()\n}\n\n` +
+      `func Stdlib() {\n\tfmt.Println("x")\n}\n`,
+  );
+  return dir;
+}
+
+test("Go extraction: cross-package qualified calls (pkg.Func) resolve to the callee", async () => {
+  const dir = makeCrossPkgFixture();
+  try {
+    await buildGraph(dir);
+    const graph = readGraph(wiringPath(join(dir, "graft")))!;
+    const calls = (src: string, tgt: string) =>
+      graph.edges.some((e) => e.relation === "calls" && e.source === src && e.target === tgt);
+
+    // Gap A — a plain qualified call links to the exported function's definition.
+    assert.ok(
+      calls("main.go#LookupCaller", "topics/topics.go#ParseUHRPOutput"),
+      "topics.ParseUHRPOutput() should resolve cross-package",
+    );
+
+    // Gap B — the same call nested inside a composite/map literal value resolves too.
+    assert.ok(
+      calls("main.go#BuildManagers", "topics/topics.go#KVStoreCanonical"),
+      "topics.KVStoreCanonical() inside a map literal should resolve",
+    );
+
+    // The package identifier can be an import alias (`a "demo/alias"`), not just the dir name.
+    assert.ok(
+      calls("main.go#AliasCaller", "alias/alias.go#Helper"),
+      "a.Helper() via an aliased package import should resolve",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Go extraction: package-qualified resolution doesn't break member calls or invent edges", async () => {
+  const dir = makeCrossPkgFixture();
+  try {
+    await buildGraph(dir);
+    const graph = readGraph(wiringPath(join(dir, "graft")))!;
+    const callsFrom = (src: string) =>
+      graph.edges.filter((e) => e.relation === "calls" && e.source === src).map((e) => e.target);
+
+    // A typed receiver's method call still resolves to the METHOD, not a free function.
+    assert.deepEqual(callsFrom("main.go#MemberCaller"), ["main.go#Engine.run"]);
+
+    // A stdlib call (`fmt.Println`) names a package not in the repo — it must stay
+    // unresolved rather than latch onto some same-named in-repo function.
+    assert.equal(callsFrom("main.go#Stdlib").length, 0, "fmt.Println should not produce a call edge");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("A5: a go.mod under a persisted --include-dir override is found, so imports inside it resolve internally", async () => {
   // build/ is in SKIP_DIRS by default — readGoModules must honor the same
   // persisted include-dir override source-files.ts already reads, or a

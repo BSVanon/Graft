@@ -13,7 +13,7 @@ import Go from "tree-sitter-go";
 import Rust from "tree-sitter-rust";
 import { basename } from "node:path";
 import { contentHash } from "../util/id.js";
-import { collectBindings, goReceiverVarOf, resolveRecvType, type FileBindings } from "./bindings.js";
+import { collectBindings, collectGoPackages, goReceiverVarOf, resolveRecvType, type FileBindings } from "./bindings.js";
 import type { Kind, NodeV1, Relation } from "./types.js";
 
 export type Language = "typescript" | "tsx" | "python" | "go" | "rust";
@@ -198,6 +198,7 @@ export interface WalkCtx {
   enclosingClass: string | null; // nearest enclosing class (py/ts `self`/`this`)
   goReceiverVar: string | null; // Go receiver var, e.g. `w` in `func (w *Worker)`
   importedSymbols: ReadonlyMap<string, { name: string; specifier: string }>;
+  goPackages: ReadonlySet<string>; // Go imported package identifiers, for pkg.Func() calls
 }
 
 /** A definition we're about to emit, normalized across the shapes we handle. */
@@ -224,6 +225,7 @@ export function extractFile(rel: string, source: string, lang: Language): Extrac
   const root = parseSource(source);
   const bindings = collectBindings(root, lang);
   const importedSymbols = collectImportedSymbols(root, lang);
+  const goPackages = collectGoPackages(root, lang);
 
   const nodes: NodeV1[] = [
     {
@@ -256,6 +258,7 @@ export function extractFile(rel: string, source: string, lang: Language): Extrac
     enclosingClass: null,
     goReceiverVar: null,
     importedSymbols,
+    goPackages,
   };
   // Every id minted this file, seeded with the file node's own id (`rel`) so a
   // top-level definition can never collide with it. Threaded as its own
@@ -357,14 +360,25 @@ function walk(node: Parser.SyntaxNode, ctx: WalkCtx, out: NodeV1[], edges: RawEd
   if (node.type === callType) {
     const callee = calleeName(node, ctx.lang);
     if (callee) {
+      const recvType = resolveRecvType(callee.receiver, ctx);
+      // Go: `pkg.Func()` where `pkg` is an imported package (and not a typed local
+      // shadowing it) is a package-qualified free-function call, not a member call.
+      // Resolve it by function name like a bare `Func()` — otherwise the resolver
+      // drops it as a member call with no receiver type, and cross-package calls
+      // (incl. those nested in composite/map literals) never link to their callee.
+      const goPkgCall =
+        ctx.lang === "go" &&
+        callee.viaMember &&
+        !recvType &&
+        !!callee.receiver &&
+        ctx.goPackages.has(callee.receiver);
       const callEdge: RawEdge = {
         source: ctx.parentId,
         relation: "calls",
         name: callee.name,
-        viaMember: callee.viaMember,
+        viaMember: goPkgCall ? false : callee.viaMember,
         file: ctx.rel,
       };
-      const recvType = resolveRecvType(callee.receiver, ctx);
       edges.push(recvType ? { ...callEdge, recvType } : callEdge);
     }
   } else if (isImport(node, ctx.lang)) {

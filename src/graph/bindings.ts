@@ -76,6 +76,36 @@ export function defName(node: Parser.SyntaxNode, lang: Language): string | null 
   return null;
 }
 
+/** The set of imported *package identifiers* in a Go file — the name each import
+ * binds locally: an explicit alias (`t "…/topics"` → `t`), else the import path's
+ * last segment (`"…/topics"` → `topics`, matching Go's package-name convention).
+ * Dot-imports (`. "…"`) and blank imports (`_ "…"`) bind no usable qualifier and
+ * are skipped. Empty for non-Go. Lets a call site tell a package-qualified
+ * free-function call (`topics.Parse()`) apart from a typed-receiver method call
+ * (`u.Save()`): only the former's receiver appears here. Pure. */
+export function collectGoPackages(root: Parser.SyntaxNode, lang: Language): ReadonlySet<string> {
+  const pkgs = new Set<string>();
+  if (lang !== "go") return pkgs;
+  const visit = (node: Parser.SyntaxNode): void => {
+    if (node.type === "import_spec") {
+      const nameNode = node.childForFieldName("name");
+      if (nameNode) {
+        // `package_identifier` is an explicit alias; `dot`/`blank_identifier` bind
+        // no qualifier we can attribute a call to, so skip them.
+        if (nameNode.type === "package_identifier") pkgs.add(nameNode.text);
+      } else {
+        const path = node.childForFieldName("path")?.text?.replace(/^["`]|["`]$/g, "");
+        const seg = path?.split("/").pop();
+        if (seg) pkgs.add(seg);
+      }
+      return; // nothing under an import_spec needs visiting
+    }
+    for (const c of node.namedChildren) visit(c);
+  };
+  visit(root);
+  return pkgs;
+}
+
 /** The receiver parameter's own variable name for a Go method (`func (w *Worker) …`
  * → `w`). Null if it can't be read. */
 export function goReceiverVarOf(node: Parser.SyntaxNode): string | null {
