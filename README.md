@@ -5,6 +5,7 @@
 ### Turbocharge Claude Code, Cursor, Codex, Gemini & every coding agent: faster, cheaper, with contextual understanding specific to your codebase.
 
 <p>
+  <a href="https://github.com/NanoNets/Graft"><img src="https://img.shields.io/github/stars/NanoNets/Graft?style=for-the-badge&logo=github&logoColor=white&label=Star%20on%20GitHub&color=FFC83D" /></a>
   <a href="https://graft.nanonets.ai"><img src="https://img.shields.io/badge/website-graft.nanonets.ai-546FFF?style=for-the-badge" /></a>
   <a href="https://discord.gg/zxmKweAA29"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=for-the-badge&logo=discord&logoColor=white" /></a>
   <a href="https://www.npmjs.com/package/@nanonets/graft"><img src="https://img.shields.io/npm/v/%40nanonets%2Fgraft?style=for-the-badge&logo=npm&logoColor=white&label=npm" /></a>
@@ -20,17 +21,17 @@
 
 | Metric | Cold Claude Code | Claude Code with graft |
 |---|---|---|
-| Tool-call savings | Baseline | **+46%** |
+| Tool-call reduction | Baseline | **+46%** |
 | Token savings | Baseline | **+42%** |
 | Time savings | Baseline | **+60%** |
-| Correctness | 65% | **75% (+10 pts)** |
+| Correctness | 54% | **66% (+12 pts)** |
 
-<sub>Efficiency is a 162-run controlled benchmark (same agent, same file tools, only the context differs). Correctness is **SWE-bench Verified**, graded by the official harness — graft resolved 75% of instances tested against Cold Claude Code's 65%. The "up to 4× cheaper / 3× faster" figures are the biggest single-task wins from a separate real-repo sweep (PocketBase, ollama, Excalidraw). [Efficiency method ↓](#benchmark) · [SWE-bench ↓](#swe-bench-verified) · [Per-repo numbers ↓](#tested-on-your-popular-repos)</sub>
+<sub>Efficiency is a 162-run controlled benchmark (same agent, same file tools, only the context differs). Correctness is **SWE-bench Verified**, graded by the official harness — graft resolved 66% of instances tested against Cold Claude Code's 54%. [Efficiency method ↓](#benchmark) · [SWE-bench ↓](#swe-bench-verified) · [Per-repo numbers ↓](#tested-on-your-popular-repos)</sub>
 
 </div>
 
 <p align="center">
-  <img src="assets/graft-terminal.png" alt="Two commands — npm install and graft init — then Graft rides along in a Claude Code session, statusline synced" width="820"/>
+  <img src="assets/graft-comparison-demo.gif" alt="Side-by-side comparison of a coding agent working with and without graft" width="820"/>
 </p>
 
 ---
@@ -43,6 +44,7 @@
 - [Benchmark](#benchmark)
 - [SWE-bench Verified](#swe-bench-verified)
 - [How the graph gets built](#how-the-graph-gets-built)
+- [Supported languages](#supported-languages)
 - [What's in a node](#whats-in-a-node)
 - [What runs where](#what-runs-where)
 - [Agent integration](#agent-integration) — [MCP server](#mcp-server) · [Claude Code (deep integration)](#claude-code-deep-integration)
@@ -75,6 +77,10 @@ git add .claude && git commit -m "wire in graft"
 
 Prefer not to install globally? `npx @nanonets/graft init` works the same way.
 
+<p align="center">
+  <img src="assets/graft-terminal.png" alt="Two commands — npm install and graft init — then Graft rides along in a Claude Code session, statusline synced" width="820"/>
+</p>
+
 ---
 
 ## The problem
@@ -106,7 +112,7 @@ Graft builds that understanding **once** and writes it into your repo as a folde
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/graft-cold-vs-graft-dark.png">
-    <img src="assets/graft-cold-vs-graft.png" alt="The same task, 'fix the auth bug', run two ways. A cold Claude Code session re-reads the repo and wanders file to file; Claude Code + graft loads its map once and rides the hooks to one clean pass. With Graft: 46% fewer tool calls, 42% fewer tokens, 60% less time, +33% on SWE-bench." width="880"/>
+    <img src="assets/graft-cold-vs-graft.png" alt="The same task, 'fix the auth bug', run two ways. A cold Claude Code session re-reads the repo and wanders file to file; Claude Code + graft loads its map once and rides the hooks to one clean pass. With Graft: 46% fewer tool calls, 42% fewer tokens, 60% less time, +22% more SWE-bench instances resolved." width="880"/>
   </picture>
 </p>
 
@@ -136,47 +142,22 @@ Graft never answered worse than cold, on any corpus. The pull variant gave up mo
 
 The sweep above is our harness measuring our mechanism. So we ran the industry-standard one too — **SWE-bench Verified**, real GitHub issues from real repos, graded by the official `swebench` harness. No judge model, no similarity score: your patch is applied, the maintainers' own tests are run, and you either flip the failing test without breaking the passing ones or you don't.
 
-**20 instances**, same model on both arms — **Claude Sonnet 5** — same Docker images, same turn limits. The only difference is whether graft is wired in.
+**50 instances**, same model on both arms — **Claude Sonnet 5** — same Docker images, same turn limits. The only difference is whether graft is wired in.
 
 | Correctness & efficiency | Cold Claude Code | Claude Code with graft | Improvement |
 |---|---|---|---|
-| Correctness | 65% of instances tested | **75% of instances tested** | **+10 pts** |
-| Tests passed | 2,618 | **2,628** | **+10** |
-| Token savings | 45.6M | **36.9M** | **+19%** |
-| Cost savings | $16.34 | **$13.93** | **+15%** |
-| Tool-call savings | 388 | **288** | **+26%** |
-| API-request savings | 697 | **524** | **+25%** |
-| Wall-clock savings | 4,424s | **2,995s** | **+32%** |
+| Correctness | 27 / 50 (54%) | **33 / 50 (66%)** | **+12 pts** |
+| Token savings | 142.0M | **109.4M** | **+23%** |
+| Cost savings | $52.34 | **$42.43** | **+19%** |
+| Tool-call savings | 1,370 | **1,031** | **+25%** |
+| API-request savings | 2,455 | **1,875** | **+24%** |
+| Wall-clock savings | 13,094s | **8,922s** | **+32%** |
 
-### Where graft fixed what cold missed
-
-| SWE-bench instance | Cold Claude Code | Claude Code with graft | Token usage vs. cold | Tool usage vs. cold |
-|---|---|---|---:|---:|
-| `django-11532` | Failed: 131 / 149 tests | **Passed: 149 / 149 tests** | **63%** | **60%** |
-| `django-16263` | Failed: 102 / 103 tests | **Passed: 103 / 103 tests** | **51%** | **74%** |
-| `sphinx-9461` | Failed: 61 / 62 tests | **Passed: 62 / 62 tests** | **91%** | **88%** |
-| `django-11400` | Failed: 62 / 64 tests | **Passed: 64 / 64 tests** | 347% | 308% |
-| `pylint-6386` | Failed: 7 / 8 tests | **Passed: 8 / 8 tests** | 163% | 132% |
-| `django-11885` | Failed: 42 / 44 tests | **Passed: 44 / 44 tests** | 219% | 172% |
-
-### Where graft cut the cost
-
-| SWE-bench instance | Cold Claude Code | Claude Code with graft | Token usage vs. cold | Tool usage vs. cold |
-|---|---|---|---:|---:|
-| `sphinx-10673` | Passed: 10 / 10 tests | **Passed: 10 / 10 tests** | **50%** | **51%** |
-| `django-16263` | Failed: 102 / 103 tests | **Passed: 103 / 103 tests** | **51%** | **74%** |
-| `django-11276` | Passed: 574 / 574 tests | **Passed: 574 / 574 tests** | **61%** | **58%** |
-| `django-10554` | Passed: 25 / 25 tests | **Passed: 25 / 25 tests** | **66%** | **69%** |
-| `django-11133` | Passed: 65 / 65 tests | **Passed: 65 / 65 tests** | **78%** | **61%** |
-| `sphinx-9461` | Failed: 61 / 62 tests | **Passed: 62 / 62 tests** | **91%** | **88%** |
-| `matplotlib-14623` | Passed: 401 / 401 tests | **Passed: 401 / 401 tests** | **95%** | **89%** |
-| `matplotlib-25775` | Passed: 96 / 96 tests | **Passed: 96 / 96 tests** | **98%** | **80%** |
-
-graft resolved **15 of 20 instances** against Cold Claude Code's 13 — and got there with 26% fewer tool calls, 19% fewer tokens, and 32% less wall-clock time. Every correctness win has the same shape: the baseline patches one file and misses its siblings. On `django-11532` it patched 1 of the 5 files the fix requires and broke 18 previously-passing tests, twice over. On `django-16263` it patched 1 of 4 and scored 102 / 103. graft found the rest — and on `django-16263` did it in half the tokens and half the time.
+graft resolved **33 of 50 instances** against Cold Claude Code's 27 — and got there with 25% fewer tool calls, 23% fewer tokens, and 32% less wall-clock time. Every correctness win has the same shape: the baseline patches one file and misses its siblings. On `django-11532` it patched 1 of the 5 files the fix requires and broke 18 previously-passing tests, twice over. On `django-16263` it patched 1 of 4 and scored 102 / 103. graft found the rest — and on `django-16263` did it in half the tokens and half the time.
 
 Two harnesses, two claims: the controlled sweep says graft is cheaper and faster, SWE-bench says it's also more correct.
 
-<sub>Correctness and tests over all instances; tokens, cost and calls over the instances both arms resolved, for a like-for-like comparison. Official SWE-bench Verified images and official `swebench` 4.1.0 grader, native x86_64.</sub>
+<sub>Correctness over all instances; tokens, cost and calls over the instances both arms resolved, for a like-for-like comparison. Official SWE-bench Verified images and official `swebench` 4.1.0 grader, native x86_64.</sub>
 
 ---
 
@@ -201,6 +182,32 @@ Every pass is cached by content hash — the LLM ones and the tree-sitter parse 
 That cheapness is what lets **every query refresh the graph before it answers**. A retrieval call stats the tree against the last build's fingerprint (~3ms), and rebuilds only if something moved — so `ask`/`grep`/`callers`/`skeleton`/`map` describe the code as it is right now, including edits that are unsaved to git: uncommitted, unstaged, or staged all look the same to graft, which never reads git at all. The refresh is structural and `$0`; it never calls the LLM. Turn it off per-command with `--no-refresh`, or everywhere with `GRAFT_NO_REFRESH=1`.
 
 Alongside the markdown graph, `graft build` builds `graft/.graph/wiring.json` — a per-symbol code graph — plus a per-file wiring card mirroring your source tree. Tier 1 is pure tree-sitter (every function, class, and call edge; deterministic, no model, no network), which is why plain `graft build` needs no key. The `--deep` pass adds a one-line summary and a crux excerpt per symbol, cached by body hash.
+
+---
+
+## Supported languages
+
+Graft parses with tree-sitter at two levels of fidelity, plus an optional
+compiler-grade layer — all `$0` and deterministic (no model, no key):
+
+- **Full-fidelity** — hand-written extractors with scope-aware, cross-file call
+  and import resolution:
+  **TypeScript / JavaScript** (incl. JSX & TSX), **Python**, **Go**, **Java**.
+
+- **Broad** — symbols (functions, classes, methods, types, …) plus name-resolved
+  call edges via a generic tree-sitter extractor, one grammar per language:
+  **Rust, C, C++, C#, Ruby, PHP, Kotlin, Scala, Swift, Elixir, Solidity,
+  OCaml, Zig, Dart**.
+
+- **Compiler-grade edges (opt-in)** — `graft build --lsp` adds precise
+  `lsp_resolved` call edges (member calls the static pass can't type) when a
+  language server is on your `PATH`: **rust-analyzer** (Rust), **clangd** (C/C++),
+  **gopls** (Go), **pyright** (Python), **typescript-language-server** (TS/JS).
+  It's best-effort — with no server installed the graph is unchanged.
+
+Twenty languages in total. A file whose language isn't listed is skipped, not
+indexed. Adding a broad-tier language is a small contribution — see
+[CREDITS.md](CREDITS.md) for the folks who added the current set.
 
 ---
 
@@ -304,6 +311,11 @@ Where a CLI agent supports user-level `hooks.json`, `init` also installs Graft's
 - **context on tap** — each prompt pulls the matching nodes into the session; editing a file surfaces what depends on it ("blast radius"); new sessions start with the repo map
 
 <p align="center">
+  <img src="assets/graft-hooks-demo.gif" alt="How Claude Code hooks wire graft in: install, graft init, then the hooks loop (session start, user prompt, post tool use, stop) keeps the graph built, read, and committed automatically" width="820"/>
+  <br/><sub>install → init → hooks keep the graph fresh every session</sub>
+</p>
+
+<p align="center">
   <img src="assets/graft-hook-blast-radius-demo.gif" alt="graft's post-edit hook: editing node-file.ts prints its blast radius (who depends on it) inline, the statusline flips stale → syncing → synced on its own, and the same dependents light up in graft viz" width="820"/>
   <br/><sub>edit a file → blast radius appears inline → graph auto-resyncs → confirmed in <code>graft viz</code></sub>
 </p>
@@ -359,6 +371,8 @@ graft init --list-agents             # list known agent ids and exit
 
 graft version                        # print the installed + latest published npm version
 graft upgrade                        # npm install -g the latest published version
+                                     # a new version is announced automatically (checked once a day);
+                                     # after upgrading, the next session refreshes this repo's wiring itself
 
 # global
 graft --dir <path>                   # use a context dir other than <repo>/graft
@@ -420,6 +434,15 @@ Graft handles two shapes without any config:
 
 Either way, narrow to one sub-project with `graft ask "<task>" --in <scope>/`
 once you know where you're working.
+
+`graft init` at the parent of a multi-repo folder wires **every child repo too**,
+not just the parent — an agent session opens at a repo root and reads its
+instruction files from there, so each child needs its own. A session started in
+the parent gets the federated view; one started in a child sees that repo alone.
+
+Commands also find the graph from a subdirectory: with no `[dir]` argument they
+walk up to the nearest `graft/`, so `graft ask` works from `src/deep/inside/`
+without a `cd` to the repo root.
 
 ## Visualize it (`graft viz`)
 
