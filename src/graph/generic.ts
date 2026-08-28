@@ -4,7 +4,7 @@
  * graft covers the long tail of languages for ~one registry row each, instead of
  * a hand-written extractor per language (the depth tier in extract.ts).
  *
- * Grammars are WASM (`tree-sitter-wasms` bundle) loaded via `web-tree-sitter`, so
+ * Grammars are WASM (`tree-sitter-wasm` bundle) loaded via `web-tree-sitter`, so
  * a new language needs no native node-gyp build. Loading is async (WASM init), so
  * callers MUST `await warmGenericGrammars([...])` once before the synchronous
  * `extractGeneric()` is used in a build/check loop. If a grammar isn't warmed,
@@ -31,7 +31,7 @@ const require = createRequire(import.meta.url);
 const QUERY_DIRS = [join(HERE, "queries"), join(HERE, "..", "..", "src", "graph", "queries")];
 
 /** A breadth-tier language: graft name, file extensions, and the wasm basename
- * in tree-sitter-wasms/out/tree-sitter-<wasm>.wasm. One row per language. */
+ * in tree-sitter-wasm/<wasm>/tree-sitter-<wasm>.wasm. One row per language. */
 export interface GenericLang {
   name: string;
   exts: string[];
@@ -46,18 +46,18 @@ export const GENERIC_LANGS: readonly GenericLang[] = [
   { name: "c", exts: [".c", ".h"], wasm: "c" },
   { name: "cpp", exts: [".cpp", ".cc", ".cxx", ".hpp", ".hh"], wasm: "cpp" },
   { name: "ruby", exts: [".rb"], wasm: "ruby" },
-  { name: "php", exts: [".php"], wasm: "php" },
   { name: "c_sharp", exts: [".cs"], wasm: "c_sharp" },
   // These ship a tags.scm (calls + symbols); ocaml/zig have none and use the
   // node-kind walker fallback (symbols only) — still one row, zero query.
-  { name: "kotlin", exts: [".kt", ".kts"], wasm: "kotlin" },
   { name: "scala", exts: [".scala", ".sc"], wasm: "scala" },
-  { name: "swift", exts: [".swift"], wasm: "swift" },
   { name: "elixir", exts: [".ex", ".exs"], wasm: "elixir" },
   { name: "solidity", exts: [".sol"], wasm: "solidity" },
   { name: "ocaml", exts: [".ml", ".mli"], wasm: "ocaml" },
   { name: "zig", exts: [".zig"], wasm: "zig" },
   { name: "dart", exts: [".dart"], wasm: "dart" }, // surfaced by PR #38 (@muneebshere)
+  { name: "clojure", exts: [".clj", ".cljs", ".cljc", ".bb"], wasm: "clojure" },
+  { name: "nix", exts: [".nix"], wasm: "nix" },
+  { name: "lua", exts: [".lua"], wasm: "lua" },
 ];
 
 const byExt = new Map<string, GenericLang>();
@@ -91,9 +91,10 @@ let tsMod: typeof import("web-tree-sitter") | null = null;
 let initPromise: Promise<void> | null = null;
 
 function requireWasm(wasm: string): Buffer | null {
-  // Resolve the grammar wasm from the tree-sitter-wasms bundle.
+  // Resolve the grammar wasm from the tree-sitter-wasm bundle (its package.json
+  // `exports` maps the bare "<lang>/…" subpath to the actual "out/<lang>/…" file).
   try {
-    const p = require.resolve(`tree-sitter-wasms/out/tree-sitter-${wasm}.wasm`);
+    const p = require.resolve(`tree-sitter-wasm/${wasm}/tree-sitter-${wasm}.wasm`);
     return readFileSync(p);
   } catch {
     return null;
@@ -152,7 +153,44 @@ export function isWarm(langName: string): boolean {
   return loaded.has(langName);
 }
 
+/** Load one grammar from the tree-sitter-wasms bundle, initialising
+ * web-tree-sitter on first call. Null when the wasm is missing or won't
+ * instantiate — never throws, so a caller degrades instead of failing the build.
+ *
+ * Shared with the container tier (container.ts), which needs a grammar to find
+ * where an embedded language starts but none of the tags.scm machinery above.
+ * Kept here so web-tree-sitter is initialised exactly once per process. */
+export async function loadWasmLanguage(wasm: string): Promise<unknown | null> {
+  if (!tsMod) {
+    tsMod = await import("web-tree-sitter");
+    initPromise = initPromise ?? tsMod.Parser.init();
+  }
+  await initPromise;
+  const bytes = requireWasm(wasm);
+  if (!bytes) return null;
+  try {
+    return await tsMod.Language.load(bytes);
+  } catch {
+    return null;
+  }
+}
+
 const PARSE_CHUNK = 16384; // <32KB slices — same tree-sitter limit workaround as extract.ts
+
+/** Parse with an already-loaded grammar. Returns the root node, or null if the
+ * grammar was never warmed or the parse blew up. Companion to
+ * `loadWasmLanguage` for callers outside this module. */
+export function parseWasm(language: unknown, source: string): TsNode | null {
+  if (!tsMod) return null;
+  try {
+    const parser = new tsMod.Parser();
+    parser.setLanguage(language as never);
+    const tree = parser.parse((i: number) => source.slice(i, i + PARSE_CHUNK));
+    return (tree?.rootNode as TsNode) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function fileNode(rel: string, source: string): NodeV1 {
   return {
@@ -216,7 +254,7 @@ export function extractGeneric(rel: string, source: string, langName: string): E
   };
 
   if (entry.query) {
-    tagsExtract(entry.query, tree.rootNode as TsNode, rel, mkDef, defs, rawEdges);
+    tagsExtract(entry.query, tree.rootNode as TsNode, rel, mkDef, defs, rawEdges, langName);
   } else {
     walkExtract(tree.rootNode as TsNode, mkDef); // no tags.scm → symbols only
   }
@@ -327,6 +365,7 @@ function tagsExtract(
   mkDef: (name: string, kind: Kind, whole: TsNode) => void,
   defs: Def[],
   rawEdges: RawEdge[],
+  langName: string,
 ): void {
   const q = query as { matches(n: unknown): Array<{ captures: Array<{ name: string; node: TsNode }> }> };
   const matches = q.matches(root);
@@ -342,7 +381,7 @@ function tagsExtract(
     const defKey = Object.keys(cap).find((k) => k.startsWith("definition."));
     if (defKey && cap.name) {
       defNameAt.add(cap.name.startIndex);
-      mkDef(cap.name.text, KIND[defKey.slice("definition.".length)] ?? "function", defScope(cap[defKey]));
+      mkDef(cap.name.text, KIND[defKey.slice("definition.".length)] ?? "function", defScope(cap[defKey], langName));
     }
     if (("reference.call" in cap || "reference.send" in cap) && cap.name)
       calls.push({ name: cap.name.text, at: cap.name.startIndex });
@@ -429,7 +468,8 @@ function walkExtract(root: TsNode, mkDef: (name: string, kind: Kind, whole: TsNo
   visit(root);
 }
 
-interface TsNode {
+/** Minimal structural view of a web-tree-sitter node — shared with container.ts. */
+export interface TsNode {
   type: string;
   text: string;
   startIndex: number;
@@ -448,8 +488,38 @@ interface TsNode {
 // attributed to the function. Expand up to the outermost enclosing
 // declaration/definition node so a def's span covers its body.
 const DEF_CONTAINER = /(definition|declaration|specifier|_item)$/;
-function defScope(node: TsNode): TsNode {
+function nextNamedSibling(n: TsNode): TsNode | null {
+  const tagged = n as TsNode & { nextNamedSibling?: TsNode | null };
+  if ("nextNamedSibling" in tagged) return tagged.nextNamedSibling ?? null;
+  const p = n.parent;
+  if (!p?.namedChild) return null;
+  const count = p.namedChildCount ?? 0;
+  for (let i = 0; i < count - 1; i++) {
+    const c = p.namedChild(i);
+    if (c && c.startIndex === n.startIndex && c.endIndex === n.endIndex) return p.namedChild(i + 1);
+  }
+  return null;
+}
+function defScope(node: TsNode, langName?: string): TsNode {
   let n = node;
   while (n.parent && DEF_CONTAINER.test(n.parent.type)) n = n.parent;
+  // Dart's grammar leaves `function_signature` / `method_signature` as a sibling
+  // of `function_body` (no wrapping function_definition). Expand so a def's span
+  // covers its body and calls inside it attribute to the function, not the file
+  // or enclosing class. Gated on Dart so other breadth-tier languages are untouched.
+  if (langName === "dart") {
+    const body = nextNamedSibling(n);
+    if (body?.type === "function_body") {
+      return {
+        type: n.type,
+        text: n.text,
+        startIndex: n.startIndex,
+        endIndex: body.endIndex,
+        startPosition: n.startPosition,
+        endPosition: body.endPosition,
+        parent: n.parent,
+      };
+    }
+  }
   return n;
 }
