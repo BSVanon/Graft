@@ -25,8 +25,13 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type { BrainLink } from "./link.js";
 
-/** Default web host. Overridden by GRAFT_BRAIN_URL, for staging and self-hosted. */
-const DEFAULT_WEB_BASE_URL = "https://agents.nanonets.com";
+/** Default web host. Overridden by GRAFT_BRAIN_URL, for staging and self-hosted.
+ *
+ * Trail's own front end, not the shared `agents.nanonets.com` one that `link.ts`
+ * calls for the API. Both are served by the same backend, so either would mint a
+ * working token — but this URL is the one a person looks at, and it has to be
+ * the Trail-branded build, with Trail's Auth0 redirect behind the signup. */
+const DEFAULT_WEB_BASE_URL = "https://app.trailhq.com";
 
 /** How long the listener waits for the browser before giving up. A signup can
  * involve reading an email, so this is minutes rather than seconds. */

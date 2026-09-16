@@ -69,7 +69,9 @@ test("handoff: the wait gives up rather than hanging forever", async () => {
 
 test("signup url: carries the repo, the port and the state", () => {
   const url = new URL(signupUrl({ repo: "NanoNets/Graft", port: 51234, state: "s-t-a-t-e" }));
-  assert.equal(url.origin, "https://agents.nanonets.com");
+  // Trail's front end, not the shared agents host link.ts calls for the API:
+  // the signup a person walks through has to be the Trail-branded build.
+  assert.equal(url.origin, "https://app.trailhq.com");
   assert.equal(url.pathname, "/get-started");
   assert.equal(url.searchParams.get("graft_repo"), "NanoNets/Graft");
   assert.equal(url.searchParams.get("graft_port"), "51234");
