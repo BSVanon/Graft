@@ -21,7 +21,8 @@ import { parseBrainArg, connectBrain, pullBrain, brainStatus } from "./brain/con
 import { rulesForPointers } from "./brain/attach.js";
 import { clearLink, type BrainLink } from "./brain/link.js";
 import { buildLocalDigest, fetchExpectedRepo, pushDigest, repoSlugFromGit, sameRepo } from "./brain/push.js";
-import { readLink } from "./brain/link.js";
+import { readLink, writeLink } from "./brain/link.js";
+import { openBrowser, signupUrl, startHandoff } from "./brain/signup.js";
 import { contextDirFor } from "./context/node-file.js";
 import { loadGraphCached } from "./graph/load.js";
 import { ensureFreshChildren, ensureFreshGraph, refreshNote } from "./graph/refresh.js";
@@ -1239,6 +1240,45 @@ const brain = program
   .command("brain")
   .description("The Trail brain attached to this repo: the rules mined from its own history");
 
+/**
+ * Get this repo a brain from the terminal, by sending the user through signup
+ * in their browser and catching the handoff on loopback.
+ *
+ * Returns the link, already saved, or null when the user should be left alone —
+ * every failure prints its own reason first, because the caller only needs to
+ * know whether to carry on.
+ */
+async function signUpForBrain(repo: string, slug: string): Promise<BrainLink | null> {
+  const handoff = await startHandoff();
+  const url = signupUrl({ repo: slug, port: handoff.port, state: handoff.state });
+
+  // Printed before the browser opens, and printed whether or not it opens: on a
+  // remote shell nothing can open, and on a desktop the window sometimes lands
+  // behind the terminal. The URL is the thing that always works.
+  console.error(`· ${slug} has no brain yet. Opening your browser to make one:`);
+  console.error(`  ${url}`);
+
+  // A non-interactive shell has nobody to click anything, so waiting five
+  // minutes for a browser that will never come is worse than saying so now.
+  if (!process.stderr.isTTY) {
+    console.error("· not a terminal — open that link, then run `graft brain connect <brainId>:<token>` here");
+    handoff.close();
+    return null;
+  }
+
+  openBrowser(url);
+  console.error("· waiting for you to finish signing up…");
+
+  const got = await handoff.wait();
+  if ("error" in got) {
+    console.error(`✗ ${got.error}`);
+    return null;
+  }
+  writeLink(repo, got.link);
+  console.error(`✓ brain connected to ${slug}`);
+  return got.link;
+}
+
 brain
   .command("connect")
   .description("Attach a brain to this repo and pull its rules")
@@ -1296,17 +1336,29 @@ brain
   .option("--no-approve", "leave the mined rules as drafts for review")
   .action(async (dir: string, opts: { approve?: boolean }) => {
     const repo = resolve(dir);
-    const link = readLink(repo);
+    // Resolved before the link, because an unlinked repo now signs up for a
+    // brain and Trail creates that brain FOR a named repository. Without a slug
+    // there is nothing to name it after — and the digest builder would fail on
+    // the same missing remote a moment later regardless.
+    const here = repoSlugFromGit(repo);
+    let link = readLink(repo);
     if (!link) {
-      console.error("· no brain attached — run `graft brain connect <brainId>:<token>` first");
-      process.exitCode = 1;
-      return;
+      if (!here) {
+        console.error("✗ this directory has no GitHub `origin` remote — graft can only push a GitHub repository today");
+        process.exitCode = 1;
+        return;
+      }
+      const signedUp = await signUpForBrain(repo, `${here.owner}/${here.name}`);
+      if (!signedUp) {
+        process.exitCode = 1;
+        return;
+      }
+      link = signedUp;
     }
     // What the website said this brain is for. Checked BEFORE any reading, so
     // standing in the wrong checkout costs a message rather than a brain full
     // of another repository's rules — a mistake that is silent afterwards,
     // because the rules look perfectly plausible, just not about your code.
-    const here = repoSlugFromGit(repo);
     const expected = await fetchExpectedRepo(link);
     if (expected && here && !sameRepo(expected.slug, `${here.owner}/${here.name}`)) {
       console.error(`✗ this brain is for ${expected.slug}, but you are in ${here.owner}/${here.name}`);

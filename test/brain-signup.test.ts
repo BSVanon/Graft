@@ -1,0 +1,90 @@
+/**
+ * The terminal half of signing up for a brain.
+ *
+ * Two of these are security-relevant rather than merely correct. The listener
+ * must refuse a handoff that does not echo the state it generated, because it
+ * is an open port on the developer's machine and any page they have open can
+ * reach loopback. And it must bind to loopback only, so the handoff is not
+ * offered to the network the laptop is sitting on.
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { CALLBACK_PATH, signupUrl, startHandoff } from "../src/brain/signup.js";
+
+/** Drive the callback the way the browser would. */
+async function callback(port: number, q: Record<string, string>): Promise<number> {
+  const url = `http://127.0.0.1:${port}${CALLBACK_PATH}?${new URLSearchParams(q).toString()}`;
+  const res = await fetch(url);
+  await res.text();
+  return res.status;
+}
+
+test("handoff: the browser's answer becomes the link", async () => {
+  const h = await startHandoff();
+  const waiting = h.wait(5000);
+
+  const status = await callback(h.port, { state: h.state, brain: "brain-123", token: "gbt_1.abc" });
+  assert.equal(status, 200);
+
+  const got = await waiting;
+  assert.deepEqual(got, { link: { brainId: "brain-123", token: "gbt_1.abc" } });
+});
+
+test("handoff: a wrong state is refused and never settles the wait", async () => {
+  const h = await startHandoff();
+  const waiting = h.wait(300);
+
+  const status = await callback(h.port, { state: "not-the-state", brain: "brain-123", token: "gbt_1.abc" });
+  assert.equal(status, 400, "a mismatched state is rejected outright");
+
+  const got = await waiting;
+  assert.ok("error" in got, "the push must not proceed on a handoff it did not ask for");
+});
+
+test("handoff: the right state without a brain and token is an error, not a link", async () => {
+  const h = await startHandoff();
+  const waiting = h.wait(5000);
+
+  const status = await callback(h.port, { state: h.state, brain: "", token: "" });
+  assert.equal(status, 400);
+
+  const got = await waiting;
+  assert.ok("error" in got);
+});
+
+test("handoff: anything but the callback path is a 404", async () => {
+  const h = await startHandoff();
+  const res = await fetch(`http://127.0.0.1:${h.port}/`);
+  await res.text();
+  assert.equal(res.status, 404);
+  h.close();
+});
+
+test("handoff: the wait gives up rather than hanging forever", async () => {
+  const h = await startHandoff();
+  const got = await h.wait(150);
+  assert.ok("error" in got);
+  assert.match((got as { error: string }).error, /timed out/);
+});
+
+test("signup url: carries the repo, the port and the state", () => {
+  const url = new URL(signupUrl({ repo: "NanoNets/Graft", port: 51234, state: "s-t-a-t-e" }));
+  assert.equal(url.origin, "https://agents.nanonets.com");
+  assert.equal(url.pathname, "/get-started");
+  assert.equal(url.searchParams.get("graft_repo"), "NanoNets/Graft");
+  assert.equal(url.searchParams.get("graft_port"), "51234");
+  assert.equal(url.searchParams.get("graft_state"), "s-t-a-t-e");
+  assert.equal(url.searchParams.get("step"), "repo");
+});
+
+test("signup url: GRAFT_BRAIN_URL points signup at staging too", () => {
+  const before = process.env.GRAFT_BRAIN_URL;
+  process.env.GRAFT_BRAIN_URL = "https://staging-agents.nanonets.com/";
+  try {
+    const url = new URL(signupUrl({ repo: "a/b", port: 1, state: "s" }));
+    assert.equal(url.origin, "https://staging-agents.nanonets.com", "a trailing slash must not double up");
+  } finally {
+    if (before === undefined) delete process.env.GRAFT_BRAIN_URL;
+    else process.env.GRAFT_BRAIN_URL = before;
+  }
+});
