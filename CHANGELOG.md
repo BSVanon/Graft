@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.18.0
+
+### Added
+
+- **Trail Brain integration** (#322): graft can build a *brain* from a repo and
+  carry its rules into every `ask` — a two-way link, so retrieval is shaped by
+  the team context a brain accumulates, not the code graph alone.
+- **A brain verifies the checkout before it mines** (#344): graft checks the
+  working copy against the repo a brain expects, so rules are never mined from
+  the wrong tree.
+
+### Fixed
+
+- **A brain refreshes its rules from upkeep** (#343), so a single empty pull no
+  longer leaves it stuck without rules.
+
+## 0.17.0
+
+### Added
+
+- **Claude Code sessions now report the dollar value of what graft saved** (#282),
+  not just the token count — the running total on the statusline is priced, so
+  the payoff of routing a lookup through the graph instead of reading files whole
+  is visible in the terminal.
+- **`graft init` also writes the Claude Code wiring into `~`** (#276), so
+  worktrees and fresh shells created off the same home keep graft available
+  instead of losing the hooks and statusline the moment you leave the repo root.
+
+### Fixed
+
+- The **PR-review GitHub App** keeps its review pages on disk (#278) so posted
+  links survive a restart, reviews **merged and closed PRs** via the head ref
+  diffed against the merge base (#279, #280) so a merged PR keeps a working graph
+  link, and **runs each review in its own process** (#281) so one slow review no
+  longer blocks the server.
+- **Green main** (#277): the telemetry test clears every CI environment variable
+  before asserting, and the CodeQL action pins are realigned.
+
+## 0.16.0
+
+### Added
+
+- **`graft init --no-statusline`** (and `GRAFT_NO_STATUSLINE=1`) skips writing
+  Claude Code's `statusLine` / `subagentStatusLine`. A custom bar — in the
+  project's `.claude/settings.json` or in `~/.claude/settings.json` — stays in
+  front: a project-level field would otherwise hide the user-level one. The
+  choice is recorded in the wiring stamp, so a later session refresh cannot
+  put Graft's bar back. Graft still recognises its own helper
+  (`graft-statusline.cjs`) and will update that command on re-init.
+
 ## 0.15.0
 
 ### Added
