@@ -192,7 +192,11 @@ export async function watchTrail(repo: string, link: BrainLink, opts: WatchTrail
   // waiting on, and an unref'd one would let it exit mid-watch with nothing
   // printed — the same trap watch.ts documents for the build watcher.
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  // Every request carries X-Graft-Watch, which is how Trail knows something is
+  // watching this trail right now and can tell the page that Claude Code will
+  // ask before pulling, instead of telling the person to run the pull. A manual
+  // pull and the session-start check do not send it.
+  const fetchImpl = withWatchHeader(opts.fetchImpl ?? fetch);
 
   const startedAt = now();
   const deadline = startedAt + timeoutMs;
@@ -378,4 +382,13 @@ export function trailContextLine(s: TrailSnapshot, lastSeen?: number): string | 
   const d = n - lastSeen;
   if (d <= 0) return null;
   return `Trail: ${fmt(d)} new ${plural(d, "suggestion since your last session is", "suggestions since your last session are")} waiting for review at ${s.reviewUrl}.`;
+}
+
+/** `fetch` with X-Graft-Watch: 1 added to every request's headers. */
+export function withWatchHeader(inner: typeof fetch): typeof fetch {
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set("x-graft-watch", "1");
+    return inner(input, { ...init, headers });
+  }) as typeof fetch;
 }

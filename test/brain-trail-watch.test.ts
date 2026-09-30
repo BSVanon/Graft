@@ -18,6 +18,7 @@ import {
   watchExitLines,
   watchTrail,
   type WatchTrailOptions,
+  withWatchHeader,
 } from '../src/brain/watch-trail.js';
 import type { BrainLink } from '../src/brain/link.js';
 import { runCli, tmpRepo } from './helpers.js';
@@ -211,4 +212,21 @@ test('graft trail watch on a repo with no trail exits 1 at once, and --help docu
   assert.match(help.stdout, /Wait until Trail has suggestions to review or accepted changes to pull/);
   assert.match(help.stdout, /--accepted-only/);
   assert.match(help.stdout, /exit 2/);
+});
+
+// Trail tells the page that Claude Code is watching from this header; a watch
+// must send it on every read, and a manual pull must not (it uses gatherPull
+// with a plain fetch).
+test('withWatchHeader adds X-Graft-Watch to every request and keeps the rest', async () => {
+  const seen: Headers[] = [];
+  const inner = (async (_u: string, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers));
+    return new Response('{}', { status: 200 });
+  }) as unknown as typeof fetch;
+  const f = withWatchHeader(inner);
+  await f('http://trail.test/a', { headers: { authorization: 'Bearer t', accept: 'application/json' } });
+  await f('http://trail.test/b');
+  assert.equal(seen[0]!.get('x-graft-watch'), '1');
+  assert.equal(seen[0]!.get('authorization'), 'Bearer t');
+  assert.equal(seen[1]!.get('x-graft-watch'), '1');
 });
