@@ -169,7 +169,7 @@ export interface WatchTrailOptions {
   onTick?: (r: SnapshotResult) => void;
 }
 
-export const WATCH_DEFAULTS = { intervalMs: 60_000, settleMs: 60_000, timeoutMs: 60 * 60_000 } as const;
+export const WATCH_DEFAULTS = { intervalMs: 10_000, settleMs: 60_000, timeoutMs: 60 * 60_000 } as const;
 
 /**
  * Read Trail every interval until one of three things is true, and return which.
